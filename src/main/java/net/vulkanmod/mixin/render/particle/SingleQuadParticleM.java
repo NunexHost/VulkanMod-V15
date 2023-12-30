@@ -1,26 +1,3 @@
-package net.vulkanmod.mixin.render.particle;
-
-import com.mojang.blaze3d.vertex.VertexConsumer;
-import net.minecraft.client.Camera;
-import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.client.particle.Particle;
-import net.minecraft.client.particle.ParticleRenderType;
-import net.minecraft.client.particle.SingleQuadParticle;
-import net.minecraft.client.renderer.LevelRenderer;
-import net.minecraft.core.BlockPos;
-import net.minecraft.util.Mth;
-import net.minecraft.world.phys.Vec3;
-import net.vulkanmod.interfaces.ExtendedVertexBuilder;
-import net.vulkanmod.render.chunk.RenderSection;
-import net.vulkanmod.render.chunk.WorldRenderer;
-import net.vulkanmod.vulkan.util.ColorUtil;
-import org.joml.Quaternionf;
-import org.joml.Vector3f;
-import org.spongepowered.asm.mixin.Final;
-import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Overwrite;
-import org.spongepowered.asm.mixin.Shadow;
-
 @Mixin(SingleQuadParticle.class)
 public abstract class SingleQuadParticleM extends Particle {
 
@@ -44,17 +21,16 @@ public abstract class SingleQuadParticleM extends Particle {
      */
     @Overwrite
     public void render(VertexConsumer vertexConsumer, Camera camera, float f) {
-        float xOffset = (float)(Mth.lerp(f, this.xo, this.x));
-        float yOffset = (float)(Mth.lerp(f, this.yo, this.y));
-        float zOffset = (float)(Mth.lerp(f, this.zo, this.z));
+        double lx = (Mth.lerp(f, this.xo, this.x));
+        double ly = (Mth.lerp(f, this.yo, this.y));
+        double lz = (Mth.lerp(f, this.zo, this.z));
 
-        if(cull(WorldRenderer.getInstance(), xOffset, yOffset, zOffset))
+        if(cull(WorldRenderer.getInstance(), (float) lx, (float) ly, (float) lz))
             return;
 
-        Vec3 vec3 = camera.getPosition();
-        xOffset -= (float) vec3.x();
-        yOffset -= (float) vec3.y();
-        zOffset -= (float) vec3.z();
+        float offsetX = (float) (lx - camera.getPosition().x());
+        float offsetY = (float) (ly - camera.getPosition().y());
+        float offsetZ = (float) (lz - camera.getPosition().z());
 
         Quaternionf quaternionf;
         if (this.roll != 0.0F) {
@@ -64,29 +40,24 @@ public abstract class SingleQuadParticleM extends Particle {
             quaternionf = camera.rotation();
         }
 
-        Vector3f[] vector3fs = new Vector3f[]{new Vector3f(-1.0F, -1.0F, 0.0F), new Vector3f(-1.0F, 1.0F, 0.0F), new Vector3f(1.0F, 1.0F, 0.0F), new Vector3f(1.0F, -1.0F, 0.0F)};
-        float j = this.getQuadSize(f);
+        Vector3f tempVector = new Vector3f();
+        for (int k = 0; k < 4; ++k) {
+            tempVector.set(vector3fs[k]);
+            tempVector.rotate(quaternionf);
+            tempVector.mul(j);
+            tempVector.add(offsetX, offsetY, offsetZ);
 
-        for(int k = 0; k < 4; ++k) {
-            Vector3f vector3f = vector3fs[k];
-            vector3f.rotate(quaternionf);
-            vector3f.mul(j);
-            vector3f.add(xOffset, yOffset, zOffset);
+            float u0 = this.getU0();
+            float u1 = this.getU1();
+            float v0 = this.getV0();
+            float v1 = this.getV1();
+            int light = this.getLightColor(f);
+
+            ExtendedVertexBuilder vertexBuilder = (ExtendedVertexBuilder)vertexConsumer;
+            int packedColor = ColorUtil.packColorIntRGBA(this.rCol, this.gCol, this.bCol, this.alpha);
+
+            vertexBuilder.vertex(tempVector.x(), tempVector.y(), tempVector.z(), u1, v1, packedColor, light);
         }
-
-        float u0 = this.getU0();
-        float u1 = this.getU1();
-        float v0 = this.getV0();
-        float v1 = this.getV1();
-        int light = this.getLightColor(f);
-
-        ExtendedVertexBuilder vertexBuilder = (ExtendedVertexBuilder)vertexConsumer;
-        int packedColor = ColorUtil.packColorIntRGBA(this.rCol, this.gCol, this.bCol, this.alpha);
-
-        vertexBuilder.vertex(vector3fs[0].x(), vector3fs[0].y(), vector3fs[0].z(), u1, v1, packedColor, light);
-        vertexBuilder.vertex(vector3fs[1].x(), vector3fs[1].y(), vector3fs[1].z(), u1, v0, packedColor, light);
-        vertexBuilder.vertex(vector3fs[2].x(), vector3fs[2].y(), vector3fs[2].z(), u0, v0, packedColor, light);
-        vertexBuilder.vertex(vector3fs[3].x(), vector3fs[3].y(), vector3fs[3].z(), u0, v1, packedColor, light);
     }
 
     protected int getLightColor(float f) {
