@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Set;
 
 import static java.util.stream.Collectors.toSet;
-import static net.vulkanmod.vulkan.queue.Queue.*;
+import static net.vulkanmod.vulkan.queue.Queue.findQueueFamilies;
 import static net.vulkanmod.vulkan.util.VUtil.asPointerBuffer;
 import static org.lwjgl.glfw.GLFWVulkan.glfwGetRequiredInstanceExtensions;
 import static org.lwjgl.system.MemoryStack.stackGet;
@@ -21,7 +21,7 @@ import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.vulkan.EXTDebugUtils.VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
 import static org.lwjgl.vulkan.KHRSurface.*;
 import static org.lwjgl.vulkan.VK10.*;
-import static org.lwjgl.vulkan.VK12.VK_API_VERSION_1_1;
+import static org.lwjgl.vulkan.VK12.VK_API_VERSION_1_2;
 
 public abstract class DeviceManager {
     public static List<DeviceInfo> suitableDevices;
@@ -36,6 +36,10 @@ public abstract class DeviceManager {
 
     public static SurfaceProperties surfaceProperties;
 
+    static GraphicsQueue graphicsQueue;
+    static PresentQueue presentQueue;
+    static TransferQueue transferQueue;
+    static ComputeQueue computeQueue;
 
     static void getAvailableDevices(VkInstance instance) {
         try(MemoryStack stack = stackPush()) {
@@ -136,7 +140,9 @@ public abstract class DeviceManager {
 
         try(MemoryStack stack = stackPush()) {
 
-            int[] uniqueQueueFamilies = QueueFamilyIndices.unique();
+            net.vulkanmod.vulkan.queue.Queue.QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+            int[] uniqueQueueFamilies = indices.unique();
 
             VkDeviceQueueCreateInfo.Buffer queueCreateInfos = VkDeviceQueueCreateInfo.calloc(uniqueQueueFamilies.length, stack);
 
@@ -163,14 +169,22 @@ public abstract class DeviceManager {
                 deviceFeatures.features().multiDrawIndirect(true);
                 deviceVulkan11Features.shaderDrawParameters(true);
             }
-            deviceFeatures.pNext(deviceVulkan11Features);
+
             VkDeviceCreateInfo createInfo = VkDeviceCreateInfo.calloc(stack);
 
             createInfo.sType(VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO);
             createInfo.pQueueCreateInfos(queueCreateInfos);
             // queueCreateInfoCount is automatically set
 
-            createInfo.pNext(deviceFeatures);
+            createInfo.pEnabledFeatures(deviceFeatures.features());
+
+            VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamicRenderingFeaturesKHR = VkPhysicalDeviceDynamicRenderingFeaturesKHR.calloc(stack);
+            dynamicRenderingFeaturesKHR.sType$Default();
+            dynamicRenderingFeaturesKHR.dynamicRendering(true);
+
+            createInfo.pNext(deviceVulkan11Features);
+            deviceVulkan11Features.pNext(dynamicRenderingFeaturesKHR.address());
+
             //Vulkan 1.3 dynamic rendering
 //            VkPhysicalDeviceVulkan13Features deviceVulkan13Features = VkPhysicalDeviceVulkan13Features.calloc(stack);
 //            deviceVulkan13Features.sType$Default();
@@ -195,7 +209,7 @@ public abstract class DeviceManager {
                 throw new RuntimeException("Failed to create logical device");
             }
 
-            device = new VkDevice(pDevice.get(0), physicalDevice, createInfo, VK_API_VERSION_1_1);
+            device = new VkDevice(pDevice.get(0), physicalDevice, createInfo, VK_API_VERSION_1_2);
 
 //            PointerBuffer pQueue = stack.pointers(VK_NULL_HANDLE);
 //
@@ -208,6 +222,10 @@ public abstract class DeviceManager {
 //            vkGetDeviceQueue(device, indices.transferFamily, 0, pQueue);
 //            transferQueue = new VkQueue(pQueue.get(0), device);
 
+            graphicsQueue = new GraphicsQueue(stack, indices.graphicsFamily);
+            transferQueue = new TransferQueue(stack, indices.transferFamily);
+            presentQueue = new PresentQueue(stack, indices.presentFamily);
+            computeQueue = new ComputeQueue(stack, indices.computeFamily);
 
         }
     }
@@ -234,6 +252,8 @@ public abstract class DeviceManager {
 
     private static boolean isDeviceSuitable(VkPhysicalDevice device) {
 
+        Queue.QueueFamilyIndices indices = findQueueFamilies(device);
+
         boolean extensionsSupported = checkDeviceExtensionSupport(device);
         boolean swapChainAdequate = false;
 
@@ -251,7 +271,7 @@ public abstract class DeviceManager {
             anisotropicFilterSupported = supportedFeatures.samplerAnisotropy();
         }
 
-        return QueueFamilyIndices.findQueueFamilies(device) && extensionsSupported && swapChainAdequate;
+        return indices.isSuitable() && extensionsSupported && swapChainAdequate;
     }
 
     private static boolean checkDeviceExtensionSupport(VkPhysicalDevice device) {
@@ -278,17 +298,21 @@ public abstract class DeviceManager {
                     .containsAll(Vulkan.REQUIRED_EXTENSION);
         }
     }
+
     // Use the optimal most performant depth format for the specific GPU
     // Nvidia performs best with 24 bit depth, while AMD is most performant with 32-bit float
-    public static int findDepthFormat() {
+    public static int findDepthFormat(boolean use24BitsDepthFormat) {
+        int[] formats = use24BitsDepthFormat ? new int[]
+                {VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_X8_D24_UNORM_PACK32, VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT}
+                : new int[] {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT};
+
         return findSupportedFormat(
                 VK_IMAGE_TILING_OPTIMAL,
                 VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT,
-                VK_FORMAT_X8_D24_UNORM_PACK32, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT);
+                formats);
     }
 
     private static int findSupportedFormat(int tiling, int features, int... formatCandidates) {
-
         try(MemoryStack stack = stackPush()) {
 
             VkFormatProperties props = VkFormatProperties.calloc(stack);
@@ -310,23 +334,27 @@ public abstract class DeviceManager {
     }
 
     public static void destroy() {
-        GraphicsQueue.cleanUp();
-        TransferQueue.cleanUp();
-        FakeTransferQueue.cleanUp();
+        graphicsQueue.cleanUp();
+        transferQueue.cleanUp();
+        computeQueue.cleanUp();
 
         vkDestroyDevice(device, null);
     }
 
-    public static Queue getGraphicsQueue() {
-        return GraphicsQueue;
+    public static GraphicsQueue getGraphicsQueue() {
+        return graphicsQueue;
     }
 
-    public static Queue getPresentQueue() {
-        return PresentQueue;
+    public static PresentQueue getPresentQueue() {
+        return presentQueue;
     }
 
-    public static Queue getTransferQueue() {
-        return TransferQueue;
+    public static TransferQueue getTransferQueue() {
+        return transferQueue;
+    }
+
+    public static ComputeQueue getComputeQueue() {
+        return computeQueue;
     }
 
     public static SurfaceProperties querySurfaceProperties(VkPhysicalDevice device, MemoryStack stack) {
@@ -362,4 +390,4 @@ public abstract class DeviceManager {
         public IntBuffer presentModes;
     }
 
-}
+                                              }
