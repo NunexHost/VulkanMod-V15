@@ -10,6 +10,7 @@ import net.vulkanmod.render.vertex.TerrainRenderType;
 
 import javax.annotation.Nullable;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
 
 public class CompiledSection {
