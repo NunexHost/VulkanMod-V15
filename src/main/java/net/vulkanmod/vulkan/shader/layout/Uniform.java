@@ -116,4 +116,4 @@ public class Uniform {
             return this.offset = builderOffset + ((align - (builderOffset % align)) % align);
         }
     }
-}
+                    }
