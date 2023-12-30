@@ -11,11 +11,8 @@ public class UploadBuffer {
     public final int indexCount;
     public final boolean autoIndices;
     public final boolean indexOnly;
-    private final ByteBuffer vertexBuffer;
-    private final ByteBuffer indexBuffer;
-
-    //debug
-    private boolean released = false;
+    private ByteBuffer vertexBuffer;
+    private ByteBuffer indexBuffer;
 
     public UploadBuffer(TerrainBufferBuilder.RenderedBuffer renderedBuffer) {
         TerrainBufferBuilder.DrawState drawState = renderedBuffer.drawState();
@@ -23,28 +20,40 @@ public class UploadBuffer {
         this.autoIndices = drawState.sequentialIndex();
         this.indexOnly = drawState.indexOnly();
 
-        if(!this.indexOnly)
-            this.vertexBuffer = Util.createCopy(renderedBuffer.vertexBuffer());
-        else
-            this.vertexBuffer = null;
+        // Optimize buffer creation:
+        if (!this.indexOnly) {
+            // Use direct buffer for potential performance gains:
+            vertexBuffer = MemoryUtil.memAlloc(renderedBuffer.vertexBuffer().capacity());
+            vertexBuffer.put(renderedBuffer.vertexBuffer()).flip();
+        }
 
-        if(!drawState.sequentialIndex())
-            this.indexBuffer = Util.createCopy(renderedBuffer.indexBuffer());
-        else
-            this.indexBuffer = null;
+        if (!drawState.sequentialIndex()) {
+            // Use direct buffer for potential performance gains:
+            indexBuffer = MemoryUtil.memAlloc(renderedBuffer.indexBuffer().capacity());
+            indexBuffer.put(renderedBuffer.indexBuffer()).flip();
+        }
     }
 
-    public int indexCount() { return indexCount; }
+    public int indexCount() {
+        return indexCount;
+    }
 
-    public ByteBuffer getVertexBuffer() { return vertexBuffer; }
+    public ByteBuffer getVertexBuffer() {
+        return vertexBuffer;
+    }
 
-    public ByteBuffer getIndexBuffer() { return indexBuffer; }
+    public ByteBuffer getIndexBuffer() {
+        return indexBuffer;
+    }
 
     public void release() {
-        if(vertexBuffer != null)
+        if (vertexBuffer != null) {
             MemoryUtil.memFree(vertexBuffer);
-        if(indexBuffer != null)
+            vertexBuffer = null; // Explicitly clear reference
+        }
+        if (indexBuffer != null) {
             MemoryUtil.memFree(indexBuffer);
-        this.released = true;
+            indexBuffer = null; // Explicitly clear reference
+        }
     }
 }
