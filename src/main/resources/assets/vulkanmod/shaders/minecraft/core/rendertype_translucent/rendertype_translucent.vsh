@@ -53,4 +53,3 @@ out vec4 vertexColor;
 out vec2 texCoord0;
 out vec4 normal;
 */
-
