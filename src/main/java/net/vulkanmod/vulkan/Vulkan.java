@@ -470,5 +470,5 @@ public class Vulkan {
     public static StagingBuffer getStagingBuffer() { return stagingBuffers[Renderer.getCurrentFrame()]; }
 
     public static DeviceInfo getDeviceInfo() { return DeviceManager.deviceInfo; }
-                                                  }
-            
+                }
+        
