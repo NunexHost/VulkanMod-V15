@@ -7,9 +7,7 @@ import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.Synchronization;
 import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.queue.Queue;
-import net.vulkanmod.vulkan.queue.QueueFamilyIndices;
 import net.vulkanmod.vulkan.texture.VulkanImage;
-import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 
@@ -30,12 +28,7 @@ import static org.lwjgl.vulkan.KHRSwapchain.*;
 import static org.lwjgl.vulkan.VK10.*;
 
 public class SwapChain extends Framebuffer {
-    private static int DEFAULT_DEPTH_FORMAT = 0;
     private static final int DEFAULT_IMAGE_COUNT = 3;
-
-    public static int getDefaultDepthFormat() {
-        return DEFAULT_DEPTH_FORMAT;
-    }
 
     //Necessary until tearing-control-unstable-v1 is fully implemented on all GPU Drivers for Wayland
     //(As Immediate Mode (and by extension Screen tearing) doesn't exist on most Wayland installations currently)
@@ -48,25 +41,16 @@ public class SwapChain extends Framebuffer {
     private long swapChain = VK_NULL_HANDLE;
     private List<VulkanImage> swapChainImages;
     private VkExtent2D extent2D;
-    // A matrix that describes the transformations that should be applied
-    // to the output of the game.
-    private Matrix4f pretransformMatrix = new Matrix4f();
-    // The pretransform flags that were given to the swapchain,
-    // masked (see "setupPreRotation(VkExtent2D, VkSurfaceCapabilitiesKHR)")
-    private int pretransformFlags;
     public boolean isBGRAformat;
     private boolean vsync = false;
 
     private int[] currentLayout;
 
     public SwapChain() {
-        DEFAULT_DEPTH_FORMAT = DeviceManager.findDepthFormat();
-
         this.attachmentCount = 2;
 
-        this.depthFormat = DEFAULT_DEPTH_FORMAT;
+        this.depthFormat = Vulkan.getDefaultDepthFormat();
         createSwapChain();
-
     }
 
     public void recreateSwapChain() {
@@ -95,7 +79,6 @@ public class SwapChain extends Framebuffer {
             VkSurfaceFormatKHR surfaceFormat = getFormat(surfaceProperties.formats);
             int presentMode = getPresentMode(surfaceProperties.presentModes);
             VkExtent2D extent = getExtent(surfaceProperties.capabilities);
-            setupPreRotation(extent, surfaceProperties.capabilities);
 
             if(extent.width() == 0 && extent.height() == 0) {
                 if(swapChain != VK_NULL_HANDLE) {
@@ -111,7 +94,7 @@ public class SwapChain extends Framebuffer {
 
             //minImageCount depends on driver: Mesa/RADV needs a min of 4, but most other drivers are at least 2 or 3
             //TODO using FIFO present mode with image num > 2 introduces (unnecessary) input lag
-            int requestedImages = Math.max(Initializer.CONFIG.imageCount, surfaceProperties.capabilities.minImageCount());
+            int requestedImages = Math.max(DEFAULT_IMAGE_COUNT, surfaceProperties.capabilities.minImageCount());
 
             IntBuffer imageCount = stack.ints(requestedImages);
 
@@ -131,9 +114,11 @@ public class SwapChain extends Framebuffer {
             createInfo.imageArrayLayers(1);
             createInfo.imageUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
 
-            if(QueueFamilyIndices.graphicsFamily != (QueueFamilyIndices.presentFamily)) {
+            Queue.QueueFamilyIndices indices = Queue.getQueueFamilies();
+
+            if(!indices.graphicsFamily.equals(indices.presentFamily)) {
                 createInfo.imageSharingMode(VK_SHARING_MODE_CONCURRENT);
-                createInfo.pQueueFamilyIndices(stack.ints(QueueFamilyIndices.graphicsFamily, QueueFamilyIndices.presentFamily));
+                createInfo.pQueueFamilyIndices(stack.ints(indices.graphicsFamily, indices.presentFamily));
             } else {
                 createInfo.imageSharingMode(VK_SHARING_MODE_EXCLUSIVE);
             }
@@ -163,7 +148,7 @@ public class SwapChain extends Framebuffer {
             LongBuffer pSwapchainImages = stack.mallocLong(imageCount.get(0));
 
             vkGetSwapchainImagesKHR(device, swapChain, imageCount, pSwapchainImages);
-            Initializer.LOGGER.info("Requested Image Count -> "+requestedImages + " Actual Images -> "+imageCount.get(0));
+
             swapChainImages = new ArrayList<>(imageCount.get(0));
 
             this.width = extent2D.width();
@@ -231,6 +216,7 @@ public class SwapChain extends Framebuffer {
     }
 
     public void beginRenderPass(VkCommandBuffer commandBuffer, MemoryStack stack) {
+        if(Renderer.renderPassUpdate) return;
         if(DYNAMIC_RENDERING) {
 //            this.colorAttachmentLayout(stack, commandBuffer, Drawer.getCurrentFrame());
 //            beginDynamicRendering(commandBuffer, stack);
@@ -323,7 +309,7 @@ public class SwapChain extends Framebuffer {
 
     private void createDepthResources() {
         this.depthAttachment = VulkanImage.createDepthImage(depthFormat, this.width, this.height,
-                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                 false, false);
     }
 
@@ -341,14 +327,6 @@ public class SwapChain extends Framebuffer {
 
     public VkExtent2D getExtent() {
         return extent2D;
-    }
-
-    public Matrix4f getPretransformMatrix(){
-        return pretransformMatrix;
-    }
-
-    public int getPretransformFlags() {
-        return pretransformFlags;
     }
 
     public VulkanImage getColorAttachment() {
@@ -431,38 +409,6 @@ public class SwapChain extends Framebuffer {
             return VK_PRESENT_MODE_FIFO_KHR; //If None of the request modes exist/are supported by Driver
         }
     }
-    private void setupPreRotation(VkExtent2D extent, VkSurfaceCapabilitiesKHR surfaceCapabilities) {
-        // Mask off anything else that does not interest us in the transform
-        pretransformFlags = surfaceCapabilities.currentTransform() &
-                (VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR |
-                VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR |
-                VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR);
-        int rotateDegrees = 0;
-        boolean swapXY = false;
-        switch (pretransformFlags) {
-            case VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR -> {
-                rotateDegrees = 90;
-                swapXY = true;
-            }
-            case VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR -> {
-                rotateDegrees = 270;
-                swapXY = true;
-            }
-            case VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR -> rotateDegrees = 180;
-        }
-        pretransformMatrix = pretransformMatrix.identity();
-        if(rotateDegrees != 0) {
-            pretransformMatrix.rotate((float) Math.toRadians(rotateDegrees), 0, 0, 1);
-            pretransformMatrix.invert();
-        }
-        if(swapXY) {
-            int originalWidth = extent.width();
-            int originalHeight = extent.height();
-            extent.width(originalHeight);
-            extent.height(originalWidth);
-
-        }
-    }
 
     public boolean isVsync() {
         return vsync;
@@ -475,6 +421,5 @@ public class SwapChain extends Framebuffer {
     public RenderPass getRenderPass() {
         return renderPass;
     }
-    public int getFramesNum() { return Initializer.CONFIG.frameQueueSize; }
     public int getImagesNum() { return this.swapChainImages.size(); }
-}
+            }
