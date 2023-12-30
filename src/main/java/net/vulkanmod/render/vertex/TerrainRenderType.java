@@ -7,30 +7,47 @@ import net.vulkanmod.vulkan.VRenderSystem;
 import java.util.EnumSet;
 
 public enum TerrainRenderType {
-    SOLID(RenderType.solid(), 2097152 /*BIG_BUFFER_SIZE*/),
-    CUTOUT_MIPPED(RenderType.cutoutMipped(), 131072 /*SMALL_BUFFER_SIZE*/),
-    CUTOUT(RenderType.cutout(), 131072 /*SMALL_BUFFER_SIZE*/),
-    TRANSLUCENT(RenderType.translucent(), 262144 /*MEDIUM_BUFFER_SIZE*/),
-    TRIPWIRE(RenderType.tripwire(), 262144 /*MEDIUM_BUFFER_SIZE*/);
+    SOLID(RenderType.solid()),
+    CUTOUT_MIPPED(RenderType.cutoutMipped()),
+    CUTOUT(RenderType.cutout()),
+    TRANSLUCENT(RenderType.translucent()),
+    TRIPWIRE(RenderType.tripwire());
 
     public static final TerrainRenderType[] VALUES = TerrainRenderType.values();
 
     public static final EnumSet<TerrainRenderType> COMPACT_RENDER_TYPES = EnumSet.of(CUTOUT_MIPPED, TRANSLUCENT);
-    public static final EnumSet<TerrainRenderType> ALL_RENDER_TYPES = EnumSet.allOf(TerrainRenderType.class);
+    public static final EnumSet<TerrainRenderType> SEMI_COMPACT_RENDER_TYPES = EnumSet.of(CUTOUT_MIPPED, CUTOUT, TRANSLUCENT);
 
-
-    public final int maxSize;  //Not sure if this should be changed to UINT16_INDEX_MAX * vertexSize
-    public final int initialSize; //Only used W/ Per RenderTy[e AreaBuffers
-
-    TerrainRenderType(RenderType renderType, int initialSize) {
-
-        this.maxSize = renderType.bufferSize();
-        this.initialSize = initialSize;
+    public final int bufferSize;
+    TerrainRenderType(RenderType renderType) {
+        this.bufferSize = renderType.bufferSize();
     }
-
     public static EnumSet<TerrainRenderType> getActiveLayers() {
-        return !Initializer.CONFIG.fastLeavesFix ? COMPACT_RENDER_TYPES : ALL_RENDER_TYPES;
+        return Initializer.CONFIG.uniqueOpaqueLayer ? COMPACT_RENDER_TYPES : SEMI_COMPACT_RENDER_TYPES;
     }
+
+    public static TerrainRenderType getCompact(String renderType) {
+        if(Initializer.CONFIG.uniqueOpaqueLayer) {
+            return switch (renderType)
+            {
+                case "solid", "cutout", "cutout_mipped" -> CUTOUT_MIPPED;
+                default -> TRANSLUCENT;
+            };
+
+        }
+        else {
+            return switch (renderType)
+            {
+                case "solid", "cutout_mipped" -> CUTOUT_MIPPED;
+                case "cutout" -> CUTOUT;
+                default -> TRANSLUCENT;
+            };
+        }
+
+
+    }
+
+
 
     public static TerrainRenderType get(String renderType) {
         return switch (renderType)
@@ -38,9 +55,8 @@ public enum TerrainRenderType {
             case "solid" -> SOLID;
             case "cutout_mipped" -> CUTOUT_MIPPED;
             case "cutout" -> CUTOUT;
-            case "translucent" -> TRANSLUCENT;
             case "tripwire" -> TRIPWIRE;
-            default -> throw new IllegalStateException("Unexpected value: " + renderType);
+            default -> TRANSLUCENT;
         };
     }
 }
