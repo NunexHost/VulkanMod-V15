@@ -6,31 +6,14 @@ import net.minecraft.network.chat.Component;
 import net.vulkanmod.Initializer;
 import net.vulkanmod.vulkan.DeviceManager;
 import net.vulkanmod.vulkan.Renderer;
-import net.vulkanmod.vulkan.Vulkan;
-import org.lwjgl.system.MemoryStack;
-import org.lwjgl.vulkan.VkSurfaceCapabilitiesKHR;
 
 import java.util.stream.IntStream;
-
-import static org.lwjgl.vulkan.KHRSurface.vkGetPhysicalDeviceSurfaceCapabilitiesKHR;
 
 public class Options {
     static net.minecraft.client.Options minecraftOptions = Minecraft.getInstance().options;
     static Config config = Initializer.CONFIG;
     static Window window = Minecraft.getInstance().getWindow();
     public static boolean fullscreenDirty = false;
-    public static final boolean drawIndirectSupported = DeviceManager.deviceInfo.isDrawIndirectSupported();
-    public static final int minImageCount;
-    public static final int maxImageCount;
-
-    static {
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            final VkSurfaceCapabilitiesKHR capabilities = VkSurfaceCapabilitiesKHR.malloc(stack);
-            vkGetPhysicalDeviceSurfaceCapabilitiesKHR(DeviceManager.physicalDevice, Vulkan.getSurface(), capabilities);
-            minImageCount = capabilities.minImageCount();
-            maxImageCount = Math.min(capabilities.maxImageCount(), 32);
-        }
-    }
 
     public static Option<?>[] getVideoOpts() {
         return new Option[] {
@@ -117,16 +100,9 @@ public class Options {
                 new CyclingOption<>("Graphics",
                         new GraphicsStatus[]{GraphicsStatus.FAST, GraphicsStatus.FANCY},
                         graphicsMode -> Component.translatable(graphicsMode.getKey()),
-                        value ->
-                        {
-                            minecraftOptions.graphicsMode().set(value);
-                            Renderer.reload=true;
-                        },
+                        value -> minecraftOptions.graphicsMode().set(value),
                         () -> minecraftOptions.graphicsMode().get()
-                ).setTooltip(Component.nullToEmpty("""
-                        Also enables additional Shader Optimisations If set to Fast
-                         * Early-Z Fragment Tests
-                         * Potentially Slightly Reduced VRAM usage""")),
+                ),
                 new CyclingOption<>("Particles",
                         new ParticleStatus[]{ParticleStatus.MINIMAL, ParticleStatus.DECREASED, ParticleStatus.ALL},
                         particlesMode -> Component.translatable(particlesMode.getKey()),
@@ -137,6 +113,15 @@ public class Options {
                         value -> Component.translatable(value.getKey()),
                         value -> minecraftOptions.cloudStatus().set(value),
                         () -> minecraftOptions.cloudStatus().get()),
+                new SwitchOption("Unique opaque layer",
+                        value -> {
+                            config.uniqueOpaqueLayer = value;
+                            Minecraft.getInstance().levelRenderer.allChanged();
+                        },
+                        () -> config.uniqueOpaqueLayer)
+                        .setTooltip(Component.nullToEmpty("""
+                        Improves performance by using a unique render layer for opaque terrain rendering.
+                        It changes distant grass aspect and may cause unexpected texture behaviour""")),
                 new RangeOption("Biome Blend Radius", 0, 7, 1,
                         value -> {
                     int v = value * 2 + 1;
@@ -144,7 +129,7 @@ public class Options {
                         },
                         (value) -> {
                             minecraftOptions.biomeBlendRadius().set(value);
-                            Renderer.reload=true;
+                            Minecraft.getInstance().levelRenderer.allChanged();
                         },
                         () -> minecraftOptions.biomeBlendRadius().get()),
                 new CyclingOption<>("Chunk Builder Mode",
@@ -188,7 +173,7 @@ public class Options {
 
     public static Option<?>[] getOtherOpts() {
         return new Option[] {
-                new RangeOption("Render queue size", 1,
+                new RangeOption("Render queue size", 2,
                         5, 1,
                         value -> {
                             config.frameQueueSize = value;
@@ -197,14 +182,6 @@ public class Options {
                         .setTooltip(Component.nullToEmpty("""
                         Higher values might help stabilize frametime
                         but will increase input lag""")),
-                new RangeOption("SwapChain Images", minImageCount,
-                        maxImageCount, 1,
-                        value -> {
-                            config.imageCount = value;
-                            Renderer.scheduleSwapChainUpdate();
-                        }, () -> config.imageCount)
-                        .setTooltip(Component.nullToEmpty("""
-                        SwapChain Image Count""")),
                 new SwitchOption("Gui Optimizations",
                         value -> config.guiOptimizations = value,
                         () -> config.guiOptimizations)
@@ -236,42 +213,23 @@ public class Options {
                         .setTooltip(Component.nullToEmpty("""
                         Enables culling for entities on not visible sections.""")),
                 new SwitchOption("Indirect Draw",
-                        value -> config.indirectDraw = drawIndirectSupported ? value : false,
-                        () -> drawIndirectSupported && config.indirectDraw)
-                        .setTooltip(Component.nullToEmpty(
-                "Supported by GPU?: "+drawIndirectSupported+"\n"+
-                        "\n"+
-                        "Reduces CPU overhead but increases GPU overhead.\n"+
-                        "Enabling it might help in CPU limited systems.\n")),
-                new SwitchOption("Per RenderType AreaBuffers",
-                        value -> {
-                            config.perRenderTypeAreaBuffers = value;
-                            Renderer.reload=true;
-                        },
-                        () -> config.perRenderTypeAreaBuffers).setTooltip(Component.nullToEmpty("""
-                        (WARNING: EXPERIMENTAL)
-                        
-                        Potentially improves performance of Chunk Rendering
-                        
-                        Very Architecture specific: May have no effect on some Devices""")),
-                new SwitchOption("Fast Leaves Fix",
-                        value -> {
-                            config.fastLeavesFix = value;
-                            Renderer.reload=true;
-                        },
-                        () -> config.fastLeavesFix).setTooltip(Component.nullToEmpty("""
-                        (WARNING: EXPERIMENTAL)
-                        
-                        Effects FPS on both Fancy/Fast Graphics
-                        
-                        Uses an Alternate Rendering Mode to restore Fast Leaves on Fast Graphics
-                        
-                        Recommended to use with "Per RenderType AreaBuffers"
-                        
-                        Extremely experimental: May Decrease performance, even on Fancy Graphics""")),
+                        value -> config.indirectDraw = value,
+                        () -> config.indirectDraw)
+                        .setTooltip(Component.nullToEmpty("""
+                        Reduces CPU overhead but increases GPU overhead.
+                        Enabling it might help in CPU limited systems.""")),
                 new CyclingOption<>("Device selector",
                         IntStream.range(-1, DeviceManager.suitableDevices.size()).boxed().toArray(Integer[]::new),
-                        value -> Component.nullToEmpty(value == -1 ? "Auto" : DeviceManager.suitableDevices.get(value).deviceName),
+                        value -> {
+                            String t;
+
+                            if(value == -1)
+                                t = "Auto";
+                            else
+                                t = DeviceManager.suitableDevices.get(value).deviceName;
+
+                            return Component.nullToEmpty(t);
+                        },
                         value -> config.device = value,
                         () -> config.device)
                         .setTooltip(Component.nullToEmpty(
