@@ -51,9 +51,10 @@ public abstract class SingleQuadParticleM extends Particle {
         if(cull(WorldRenderer.getInstance(), (float) lx, (float) ly, (float) lz))
             return;
 
-        float offsetX = (float) (lx - camera.getPosition().x());
-        float offsetY = (float) (ly - camera.getPosition().y());
-        float offsetZ = (float) (lz - camera.getPosition().z());
+        Vec3 vec3 = camera.getPosition();
+        float offsetX = (float) (lx - vec3.x());
+        float offsetY = (float) (ly - vec3.y());
+        float offsetZ = (float) (lz - vec3.z());
 
         Quaternionf quaternionf;
         if (this.roll != 0.0F) {
@@ -63,24 +64,29 @@ public abstract class SingleQuadParticleM extends Particle {
             quaternionf = camera.rotation();
         }
 
-        Vector3f tempVector = new Vector3f();
-        for (int k = 0; k < 4; ++k) {
-            tempVector.set(vector3fs[k]);
-            tempVector.rotate(quaternionf);
-            tempVector.mul(j);
-            tempVector.add(offsetX, offsetY, offsetZ);
+        Vector3f[] vector3fs = new Vector3f[]{new Vector3f(-1.0F, -1.0F, 0.0F), new Vector3f(-1.0F, 1.0F, 0.0F), new Vector3f(1.0F, 1.0F, 0.0F), new Vector3f(1.0F, -1.0F, 0.0F)};
+        float j = this.getQuadSize(f);
 
-            float u0 = this.getU0();
-            float u1 = this.getU1();
-            float v0 = this.getV0();
-            float v1 = this.getV1();
-            int light = this.getLightColor(f);
-
-            ExtendedVertexBuilder vertexBuilder = (ExtendedVertexBuilder)vertexConsumer;
-            int packedColor = ColorUtil.packColorIntRGBA(this.rCol, this.gCol, this.bCol, this.alpha);
-
-            vertexBuilder.vertex(tempVector.x(), tempVector.y(), tempVector.z(), u1, v1, packedColor, light);
+        for(int k = 0; k < 4; ++k) {
+            Vector3f vector3f = vector3fs[k];
+            vector3f.rotate(quaternionf);
+            vector3f.mul(j);
+            vector3f.add(offsetX, offsetY, offsetZ);
         }
+
+        float u0 = this.getU0();
+        float u1 = this.getU1();
+        float v0 = this.getV0();
+        float v1 = this.getV1();
+        int light = this.getLightColor(f);
+
+        ExtendedVertexBuilder vertexBuilder = (ExtendedVertexBuilder)vertexConsumer;
+        int packedColor = ColorUtil.packColorIntRGBA(this.rCol, this.gCol, this.bCol, this.alpha);
+
+        vertexBuilder.vertex(vector3fs[0].x(), vector3fs[0].y(), vector3fs[0].z(), u1, v1, packedColor, light);
+        vertexBuilder.vertex(vector3fs[1].x(), vector3fs[1].y(), vector3fs[1].z(), u1, v0, packedColor, light);
+        vertexBuilder.vertex(vector3fs[2].x(), vector3fs[2].y(), vector3fs[2].z(), u0, v0, packedColor, light);
+        vertexBuilder.vertex(vector3fs[3].x(), vector3fs[3].y(), vector3fs[3].z(), u0, v1, packedColor, light);
     }
 
     protected int getLightColor(float f) {
