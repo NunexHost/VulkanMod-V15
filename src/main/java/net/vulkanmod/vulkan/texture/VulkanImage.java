@@ -17,6 +17,7 @@ import java.util.Arrays;
 
 import static net.vulkanmod.vulkan.texture.SamplerManager.*;
 import static org.lwjgl.system.MemoryStack.stackPush;
+import static org.lwjgl.vulkan.KHRSwapchain.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 import static org.lwjgl.vulkan.VK10.*;
 
 public class VulkanImage {
@@ -72,7 +73,7 @@ public class VulkanImage {
         image.createImage(builder.mipLevels, builder.width, builder.height, builder.format, builder.usage);
         image.mainImageView = createImageView(image.id, builder.format, image.aspect, builder.mipLevels);
 
-        image.sampler = checkUsage(builder.usage, VK_IMAGE_USAGE_SAMPLED_BIT) ? SamplerManager.getTextureSampler(builder.mipLevels, builder.samplerFlags) : VK_NULL_HANDLE;
+        image.sampler = SamplerManager.getTextureSampler(builder.mipLevels, builder.samplerFlags);
 
         if(builder.levelViews) {
             image.levelImageViews = new long[builder.mipLevels];
@@ -83,10 +84,6 @@ public class VulkanImage {
         }
 
         return image;
-    }
-
-    private static boolean checkUsage(int usage, int requestedUsage) {
-        return (usage & requestedUsage)!=0;
     }
 
     public static VulkanImage createDepthImage(int format, int width, int height, int usage, boolean blur, boolean clamp) {
@@ -140,13 +137,22 @@ public class VulkanImage {
     }
 
     public static int getAspect(int format) {
-        return isDepthFormat(format) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+        return switch (format) {
+            case VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT_S8_UINT
+                    -> VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+
+            case VK_FORMAT_X8_D24_UNORM_PACK32, VK_FORMAT_D32_SFLOAT,
+                    VK_FORMAT_D16_UNORM -> VK_IMAGE_ASPECT_DEPTH_BIT;
+
+            default -> VK_IMAGE_ASPECT_COLOR_BIT;
+        };
     }
 
     public static boolean isDepthFormat(int format) {
         return switch (format) {
-            case VK_FORMAT_D32_SFLOAT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_X8_D24_UNORM_PACK32,
-                    VK_FORMAT_D32_SFLOAT_S8_UINT -> true;
+            case VK_FORMAT_X8_D24_UNORM_PACK32, VK_FORMAT_D24_UNORM_S8_UINT,
+                    VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT,
+                    VK_FORMAT_D16_UNORM -> true;
             default -> false;
         };
     }
@@ -251,7 +257,7 @@ public class VulkanImage {
         int sourceStage, srcAccessMask, destinationStage, dstAccessMask = 0;
 
         switch (image.currentLayout) {
-            case VK_IMAGE_LAYOUT_UNDEFINED -> {
+            case VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR -> {
                 srcAccessMask = 0;
                 sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
             }
@@ -298,6 +304,9 @@ public class VulkanImage {
             case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL -> {
                 dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
                 destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+            }
+            case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR -> {
+                destinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
             }
             default -> throw new RuntimeException("Unexpected value:" + newLayout);
         }
@@ -485,4 +494,4 @@ public class VulkanImage {
             };
         }
     }
-}
+            }
